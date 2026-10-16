@@ -7,8 +7,9 @@ top of it. Protocol rules (mirroring pi's own RPC mode):
   go to stderr (kept in ``stderr_tail`` for error reports)
 - requests carry a string ``id``; responses echo it and may arrive out of
   order — always correlate by id
-- ``event`` records are dispatched to the ``on_event`` callback from the
-  reader thread
+- ``event`` records are dispatched from the reader thread: records echoing a
+  pending request's ``id`` go to that request's ``on_event`` callback
+  (see :meth:`request`), the rest to the ``on_event`` constructor callback
 - closing stdin (``close()``) asks the sidecar to exit gracefully
 """
 
@@ -48,12 +49,13 @@ class SidecarTimeout(PiProcessError):
 
 
 class _Pending:
-    __slots__ = ("error", "event", "result")
+    __slots__ = ("error", "event", "on_event", "result")
 
     def __init__(self) -> None:
         self.event = threading.Event()
         self.result: Record | None = None
         self.error: PiProcessError | None = None
+        self.on_event: EventHandler | None = None
 
 
 class PiProcess:
@@ -159,8 +161,12 @@ class PiProcess:
         payload: Mapping[str, object] | None = None,
         *,
         timeout: float | None = None,
+        on_event: EventHandler | None = None,
     ) -> Record:
         """Send a command and block until its id-matched response arrives.
+
+        ``on_event``, if given, receives this request's ``event`` records
+        (records echoing its id) from the reader thread while the call blocks.
 
         Raises SidecarCommandError if the sidecar reports failure,
         SidecarTimeout on timeout, PiProcessError if the process is gone.
@@ -173,6 +179,7 @@ class PiProcess:
             pid = str(self._next_id)
             self._next_id += 1
             pending = _Pending()
+            pending.on_event = on_event
             self._pending[pid] = pending
         record: Record = {"id": pid, "type": command}
         if payload:
@@ -286,13 +293,24 @@ class PiProcess:
             self._fatal = str(record.get("message", "unknown fatal error"))
             self._init_event.set()
         elif rtype == "event":
-            if self._on_event is not None:
+            handler = self._event_handler_for(record)
+            if handler is not None:
                 try:
-                    self._on_event(record)
+                    handler(record)
                 except Exception as exc:  # noqa: BLE001 — user callbacks must not kill the reader thread
                     self._stderr_lines.append(f"[pi2py] on_event raised: {exc!r}")
         else:
             self._stderr_lines.append(f"[pi2py] unknown record type: {rtype!r}")
+
+    def _event_handler_for(self, record: Record) -> EventHandler | None:
+        """An event echoing a pending request's id belongs to that request."""
+        rid = record.get("id")
+        if isinstance(rid, str):
+            with self._pending_lock:
+                pending = self._pending.get(rid)
+            if pending is not None and pending.on_event is not None:
+                return pending.on_event
+        return self._on_event
 
     def _stderr_loop(self) -> None:
         proc = self._proc

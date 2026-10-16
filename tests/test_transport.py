@@ -11,6 +11,7 @@ import re
 import shutil
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def proc() -> tuple[PiProcess, list[dict]]:
+def proc() -> Iterator[tuple[PiProcess, list[dict]]]:
     events: list[dict] = []
     process = PiProcess(on_event=events.append)
     process.start()
@@ -81,7 +82,21 @@ def test_event_dispatch(proc: tuple[PiProcess, list[dict]]) -> None:
     assert data["emitted"] is True
     # the sidecar sends the event record before the response, so by the time
     # request() returns the reader thread has already dispatched it
-    assert events == [{"type": "event", "kind": "test", "n": 7}]
+    assert len(events) == 1
+    assert events[0]["type"] == "event"
+    assert events[0]["kind"] == "test"
+    assert events[0]["n"] == 7
+
+
+def test_request_scoped_events_route_by_id(proc: tuple[PiProcess, list[dict]]) -> None:
+    process, global_events = proc
+    scoped: list[dict] = []
+    data = process.request("emit-test-event", {"n": 3}, on_event=scoped.append)
+    assert data["emitted"] is True
+    assert len(scoped) == 1
+    assert scoped[0]["n"] == 3
+    # records routed to a request do not reach the global handler
+    assert global_events == []
 
 
 def test_concurrent_requests_correlate_by_id(proc: tuple[PiProcess, list[dict]]) -> None:

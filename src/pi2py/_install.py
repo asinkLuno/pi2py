@@ -31,8 +31,17 @@ def _resource_bytes(name: str) -> bytes:
     return (files("pi2py") / "node" / name).read_bytes()
 
 
-def _lock_hash() -> str:
-    return hashlib.sha256(_resource_bytes("package-lock.json")).hexdigest()[:12]
+def _sidecar_hash() -> str:
+    """Content hash of the shipped sidecar files — any change re-installs.
+
+    Hashing only the lockfile would run a stale sidecar.mjs from the cache
+    after upgrades that don't touch dependencies.
+    """
+    digest = hashlib.sha256()
+    for name in SIDECAR_FILES:
+        digest.update(name.encode("utf-8"))
+        digest.update(_resource_bytes(name))
+    return digest.hexdigest()[:12]
 
 
 def sidecar_cache_dir() -> Path:
@@ -43,7 +52,7 @@ def sidecar_cache_dir() -> Path:
     """
     if (override := Pi2pyConfig().sidecar_dir):
         return override
-    return platformdirs.user_cache_path("pi2py") / f"sidecar-{_lock_hash()}"
+    return platformdirs.user_cache_path("pi2py") / f"sidecar-{_sidecar_hash()}"
 
 
 def _npm_path() -> str:

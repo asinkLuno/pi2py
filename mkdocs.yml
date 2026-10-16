@@ -1,0 +1,15 @@
+site_name: pi2py
+site_description: 从 Python 调用 pi 的 agent 核心
+theme:
+  name: material
+  language: zh
+nav:
+  - 首页: index.md
+  - Sidecar 机制: sidecar.md
+markdown_extensions:
+  - admonition
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format

@@ -47,6 +47,18 @@ async function loadPi() {
   return { Agent, piAi, openAICompletionsApi };
 }
 
+// Wire shape for forwarded agent events: message_update keeps only the delta
+// (the event's partial message is the whole transcript-so-far — O(n²) bytes
+// over a stream); message_end resyncs complete state.
+function slimAgentEvent(event) {
+  if (event.type !== "message_update") return event;
+  const ame = event.assistantMessageEvent ?? {};
+  return {
+    type: event.type,
+    assistantMessageEvent: { type: ame.type, ...(ame.delta !== undefined ? { delta: ame.delta } : {}) },
+  };
+}
+
 const commands = {
   ping: () => ({ pong: true, node: process.version }),
 
@@ -62,9 +74,10 @@ const commands = {
     };
   },
 
-  // Transport test hooks (exercised by the Python test suite).
+  // Transport test hooks (exercised by the Python test suite). Event records
+  // echo the request id when present, so the client can route them per request.
   "emit-test-event": (msg) => {
-    send({ type: "event", kind: "test", n: msg.n ?? 1 });
+    send({ type: "event", kind: "test", n: msg.n ?? 1, ...(msg.id !== undefined ? { id: msg.id } : {}) });
     return { emitted: true };
   },
 
@@ -72,6 +85,8 @@ const commands = {
   //
   // `provider` is a models.json custom-provider entry (id, name, baseUrl,
   // api, apiKey, compat, models[]); `model` picks one of its model ids.
+  // With `stream: true`, pi AgentEvents are forwarded as event records
+  // (tagged with this request's id) before the response.
   "agent.run": async (msg) => {
     const { Agent, piAi, openAICompletionsApi } = await loadPi();
 
@@ -120,8 +135,21 @@ const commands = {
       initialState: msg.instructions ? { model, systemPrompt: msg.instructions } : { model },
       ...(msg.sessionId ? { sessionId: msg.sessionId } : {}),
     });
-    await agent.prompt(msg.input);
-    await agent.waitForIdle();
+    const unsubscribe = msg.stream
+      ? agent.subscribe((event) => {
+          try {
+            send({ type: "event", kind: "agent", id: msg.id ?? null, event: slimAgentEvent(event) });
+          } catch (err) {
+            log("event forward failed:", err?.message ?? String(err));
+          }
+        })
+      : null;
+    try {
+      await agent.prompt(msg.input);
+      await agent.waitForIdle();
+    } finally {
+      unsubscribe?.();
+    }
 
     if (agent.state.errorMessage) {
       throw new Error(agent.state.errorMessage);

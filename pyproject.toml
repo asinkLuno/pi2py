@@ -26,6 +26,10 @@ dev = [
     "ty>=0.0.88",
     "vulture>=2.16",
 ]
+docs = [
+    "mkdocs>=1.6",
+    "mkdocs-material>=9.5",
+]
 
 [[tool.uv.index]]
 url = "https://pypi.tuna.tsinghua.edu.cn/simple"
