@@ -16,7 +16,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Self, overload
+from typing import Literal, Self, cast, overload
 
 from rich.console import Console
 
@@ -234,7 +234,9 @@ class Agent:
         event's ``.content``. The sidecar run always finishes, even if the
         generator is abandoned early.
         """
-        return self._run(self._payload.get("instructions"), input, stream)
+        return self._run(
+            cast("str | None", self._payload.get("instructions")), input, stream
+        )
 
     @overload
     def run_skill(
@@ -352,14 +354,20 @@ class Agent:
         """
         if self._audit_dir is None:
             return
-        entry: dict[str, object] = {"ts": time.time(), "name": self._name, "input": input}
+        entry: dict[str, object] = {
+            "ts": time.time(),
+            "name": self._name,
+            "input": input,
+        }
         if error is not None:
             entry["error"] = repr(error)
         else:
             assert data is not None
             messages = data.get("messages")
             entry["content"] = str(data.get("content", ""))
-            entry["usage"] = _total_usage(messages if isinstance(messages, list) else [])
+            entry["usage"] = _total_usage(
+                messages if isinstance(messages, list) else []
+            )
         try:
             self._audit_dir.mkdir(parents=True, exist_ok=True)
             ts = datetime.now().strftime("%Y%m%dT%H%M%S_%f")

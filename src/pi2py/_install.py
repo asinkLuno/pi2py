@@ -50,7 +50,7 @@ def sidecar_cache_dir() -> Path:
     $PI2PY_SIDECAR_DIR overrides the default cache location (useful for
     tests and for sharing one install across projects).
     """
-    if (override := Pi2pyConfig().sidecar_dir):
+    if override := Pi2pyConfig().sidecar_dir:
         return override
     return platformdirs.user_cache_path("pi2py") / f"sidecar-{_sidecar_hash()}"
 
@@ -61,7 +61,7 @@ def _npm_path() -> str:
     for sibling in (Path(node).with_name("npm"), Path(node).with_name("npm.cmd")):
         if sibling.is_file():
             return str(sibling)
-    if (found := shutil.which("npm")):
+    if found := shutil.which("npm"):
         return found
     raise SidecarInstallError(f"npm not found next to {node} or on PATH")
 
@@ -78,7 +78,9 @@ def _run_npm_ci(directory: Path) -> None:
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise SidecarInstallError(f"`npm ci` failed to run in {directory}: {exc}") from exc
+        raise SidecarInstallError(
+            f"`npm ci` failed to run in {directory}: {exc}"
+        ) from exc
     if result.returncode != 0:
         tail = (result.stdout + result.stderr)[-2000:]
         raise SidecarInstallError(
@@ -99,7 +101,10 @@ def ensure_sidecar() -> Path:
         staging.mkdir(parents=True, exist_ok=True)
         for name in SIDECAR_FILES:
             (staging / name).write_bytes(_resource_bytes(name))
-        print(f"pi2py: installing Node sidecar dependencies into {target} (one-time)", file=sys.stderr)
+        print(
+            f"pi2py: installing Node sidecar dependencies into {target} (one-time)",
+            file=sys.stderr,
+        )
         _run_npm_ci(staging)
         (staging / ".complete").write_text("ok\n", encoding="utf-8")
         try:

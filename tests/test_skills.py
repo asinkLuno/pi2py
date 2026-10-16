@@ -40,7 +40,9 @@ def test_load_skill_missing_path_is_a_clean_error(tmp_path: Path) -> None:
 
 
 def test_agent_concatenates_skills_into_instructions(tmp_path: Path) -> None:
-    (tmp_path / "SKILL.md").write_text("---\nname: s\n---\n\nSkill body.", encoding="utf-8")
+    (tmp_path / "SKILL.md").write_text(
+        "---\nname: s\n---\n\nSkill body.", encoding="utf-8"
+    )
     agent = Agent(
         model="m",
         provider={"id": "p"},
@@ -50,8 +52,12 @@ def test_agent_concatenates_skills_into_instructions(tmp_path: Path) -> None:
     assert agent._payload["instructions"] == "Base.\n\nSkill body."
 
 
-def test_run_skill_injects_for_one_run_only(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    (tmp_path / "SKILL.md").write_text("---\nname: s\n---\n\nSkill body.", encoding="utf-8")
+def test_run_skill_injects_for_one_run_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "SKILL.md").write_text(
+        "---\nname: s\n---\n\nSkill body.", encoding="utf-8"
+    )
     agent = Agent(model="m", provider={"id": "p"}, instructions="Base.")
 
     captured: list[dict] = []

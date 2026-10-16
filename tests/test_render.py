@@ -16,18 +16,44 @@ def run_event(raw: dict) -> RunEvent:
     return RunEvent(type=str(raw.get("type", "")), raw=raw)
 
 
-def assistant_stream(thinking: str = "let me think", text: str = "# Title\n\nhello world") -> list[RunEvent]:
+def assistant_stream(
+    thinking: str = "let me think", text: str = "# Title\n\nhello world"
+) -> list[RunEvent]:
     """A realistic event sequence for one assistant message."""
     return [
         run_event({"type": "agent_start"}),
-        run_event({"type": "message_start", "message": {"role": "user", "content": []}}),
+        run_event(
+            {"type": "message_start", "message": {"role": "user", "content": []}}
+        ),
         run_event({"type": "message_end", "message": {"role": "user", "content": []}}),
-        run_event({"type": "message_start", "message": {"role": "assistant", "content": []}}),
+        run_event(
+            {"type": "message_start", "message": {"role": "assistant", "content": []}}
+        ),
         run_event({"type": "turn_start"}),
-        run_event({"type": "message_update", "assistantMessageEvent": {"type": "thinking_delta", "delta": thinking}}),
-        run_event({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": text}}),
-        run_event({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}),
-        run_event({"type": "turn_end", "message": {"role": "assistant"}, "toolResults": []}),
+        run_event(
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "thinking_delta", "delta": thinking},
+            }
+        ),
+        run_event(
+            {
+                "type": "message_update",
+                "assistantMessageEvent": {"type": "text_delta", "delta": text},
+            }
+        ),
+        run_event(
+            {
+                "type": "message_end",
+                "message": {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": text}],
+                },
+            }
+        ),
+        run_event(
+            {"type": "turn_end", "message": {"role": "assistant"}, "toolResults": []}
+        ),
         run_event({"type": "agent_end", "messages": []}),
     ]
 
@@ -74,16 +100,33 @@ def test_live_path_on_forced_terminal() -> None:
 
 
 def test_run_event_accessors() -> None:
-    text_update = run_event({"type": "message_update", "assistantMessageEvent": {"type": "text_delta", "delta": "hi"}})
+    text_update = run_event(
+        {
+            "type": "message_update",
+            "assistantMessageEvent": {"type": "text_delta", "delta": "hi"},
+        }
+    )
     assert text_update.delta == "hi"
     assert text_update.thinking_delta == ""
     thinking_update = run_event(
-        {"type": "message_update", "assistantMessageEvent": {"type": "thinking_delta", "delta": "hm"}}
+        {
+            "type": "message_update",
+            "assistantMessageEvent": {"type": "thinking_delta", "delta": "hm"},
+        }
     )
     assert thinking_update.delta == ""
     assert thinking_update.thinking_delta == "hm"
     ended = run_event(
-        {"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "a"}, {"type": "thinking", "thinking": "b"}]}}
+        {
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [
+                    {"type": "text", "text": "a"},
+                    {"type": "thinking", "thinking": "b"},
+                ],
+            },
+        }
     )
     assert ended.content == "a"
     assert run_event({"type": "agent_end"}).message is None

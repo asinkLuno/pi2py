@@ -45,10 +45,10 @@ def _node_version(node: str) -> tuple[int, int, int] | None:
 
 def _candidates() -> Iterator[str]:
     # Explicit override: if set, it is the only candidate.
-    if (override := Pi2pyConfig().node):
+    if override := Pi2pyConfig().node:
         yield override
         return
-    if (found := shutil.which("node")):
+    if found := shutil.which("node"):
         yield found
     home = Path.home()
     # nvm: pick the newest installed version
@@ -100,7 +100,9 @@ def find_node() -> str:
             continue
         if version >= MIN_NODE:
             return path
-        rejected.append(f"{path} ({version[0]}.{version[1]}.{version[2]} < {MIN_NODE[0]}.{MIN_NODE[1]}.{MIN_NODE[2]})")
+        rejected.append(
+            f"{path} ({version[0]}.{version[1]}.{version[2]} < {MIN_NODE[0]}.{MIN_NODE[1]}.{MIN_NODE[2]})"
+        )
     detail = "\n  ".join(rejected) if rejected else "no candidates found"
     raise NodeNotFoundError(
         "pi2py needs Node.js >= 22.19.0 (pi's requirement).\n"

@@ -87,7 +87,9 @@ def test_audit_log_writes_one_file_per_run(tmp_path: Path) -> None:
 
 
 def test_audit_log_records_failures(tmp_path: Path) -> None:
-    agent = Agent(model="no-such-model", provider=PROVIDER, name="bad", audit_dir=tmp_path)
+    agent = Agent(
+        model="no-such-model", provider=PROVIDER, name="bad", audit_dir=tmp_path
+    )
     with pytest.raises(SidecarCommandError, match="no-such-model"):
         agent.run("hello")
     agent.close()
@@ -97,7 +99,9 @@ def test_audit_log_records_failures(tmp_path: Path) -> None:
 
 
 def test_audit_log_covers_streaming_runs(tmp_path: Path) -> None:
-    agent = Agent(model="dots3-note-prev", provider=PROVIDER, name="s", audit_dir=tmp_path)
+    agent = Agent(
+        model="dots3-note-prev", provider=PROVIDER, name="s", audit_dir=tmp_path
+    )
     events = list(agent.run("hi", stream=True))
     assert events
     # the audit entry is written before the stream's end sentinel, so it

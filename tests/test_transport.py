@@ -99,7 +99,9 @@ def test_request_scoped_events_route_by_id(proc: tuple[PiProcess, list[dict]]) -
     assert global_events == []
 
 
-def test_concurrent_requests_correlate_by_id(proc: tuple[PiProcess, list[dict]]) -> None:
+def test_concurrent_requests_correlate_by_id(
+    proc: tuple[PiProcess, list[dict]],
+) -> None:
     process, _ = proc
     results: dict[int, object] = {}
     errors: list[BaseException] = []

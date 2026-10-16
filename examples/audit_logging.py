@@ -41,7 +41,9 @@ PROVIDER: dict = {
 }
 
 # The repo's test MCP server (an `add` tool); point this at your own.
-TEST_MCP_SERVER = str(Path(__file__).resolve().parent.parent / "tests" / "mcp_server.py")
+TEST_MCP_SERVER = str(
+    Path(__file__).resolve().parent.parent / "tests" / "mcp_server.py"
+)
 
 
 def main() -> None:

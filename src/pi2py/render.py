@@ -27,7 +27,9 @@ class RunPrinter:
     file) the live region is skipped and only the final message is printed.
     """
 
-    def __init__(self, *, console: Console | None = None, markdown: bool = True) -> None:
+    def __init__(
+        self, *, console: Console | None = None, markdown: bool = True
+    ) -> None:
         self._console = console if console is not None else Console()
         self._markdown = markdown
         self._live: Live | None = None
@@ -47,6 +49,7 @@ class RunPrinter:
                 self._refresh()
         elif event.type == "message_end" and role == "assistant":
             self._finish()
+
     def _renderable(self) -> RenderableType:
         parts: list[RenderableType] = []
         if self._thinking:

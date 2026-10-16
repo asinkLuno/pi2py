@@ -140,8 +140,12 @@ class PiProcess:
             env=self._env if self._env is not None else os.environ.copy(),
         )
         self._threads = [
-            threading.Thread(target=self._reader_loop, name="pi2py-reader", daemon=True),
-            threading.Thread(target=self._stderr_loop, name="pi2py-stderr", daemon=True),
+            threading.Thread(
+                target=self._reader_loop, name="pi2py-reader", daemon=True
+            ),
+            threading.Thread(
+                target=self._stderr_loop, name="pi2py-stderr", daemon=True
+            ),
         ]
         for t in self._threads:
             t.start()
@@ -243,7 +247,9 @@ class PiProcess:
     def _send(self, record: Record) -> None:
         proc = self._proc
         assert proc is not None and proc.stdin is not None
-        data = (json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+        data = (
+            json.dumps(record, ensure_ascii=False, separators=(",", ":")) + "\n"
+        ).encode("utf-8")
         with self._write_lock:
             try:
                 proc.stdin.write(data)
@@ -271,7 +277,9 @@ class PiProcess:
             except json.JSONDecodeError:
                 self._stderr_lines.append(f"[pi2py] non-JSON stdout line: {text[:200]}")
                 continue
-            self._tap("rx", record)  # before dispatch: response is tapped by the time request() returns
+            self._tap(
+                "rx", record
+            )  # before dispatch: response is tapped by the time request() returns
             self._dispatch(record)
         self._on_death()
 
@@ -283,14 +291,17 @@ class PiProcess:
                 pending = self._pending.pop(rid, None) if isinstance(rid, str) else None
             if pending is None:
                 self._stderr_lines.append(
-                    "[pi2py] stray response: " + json.dumps(record, ensure_ascii=False)[:200]
+                    "[pi2py] stray response: "
+                    + json.dumps(record, ensure_ascii=False)[:200]
                 )
                 return
             if record.get("success"):
                 data = record.get("data")
                 pending.result = data if isinstance(data, dict) else {}
             else:
-                pending.error = SidecarCommandError(str(record.get("error", "command failed")))
+                pending.error = SidecarCommandError(
+                    str(record.get("error", "command failed"))
+                )
             pending.event.set()
         elif rtype == "ready":
             protocol = record.get("protocol")
@@ -333,7 +344,9 @@ class PiProcess:
         proc = self._proc
         assert proc is not None and proc.stderr is not None
         for line in iter(proc.stderr.readline, b""):
-            self._stderr_lines.append(line.decode("utf-8", errors="replace").rstrip("\n"))
+            self._stderr_lines.append(
+                line.decode("utf-8", errors="replace").rstrip("\n")
+            )
 
     def _on_death(self) -> None:
         proc = self._proc
