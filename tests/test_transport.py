@@ -121,6 +121,28 @@ def test_concurrent_requests_correlate_by_id(proc: tuple[PiProcess, list[dict]])
     assert results == {i: i for i in range(24)}
 
 
+def test_on_record_taps_both_directions() -> None:
+    seen: list[tuple[str, dict]] = []
+    with PiProcess(on_record=lambda d, r: seen.append((d, r))) as process:
+        assert process.request("echo", {"payload": 1})["echo"] == 1
+    # rx taps land before dispatch, so everything is in by the time run() returns
+    assert seen[0][0] == "rx" and seen[0][1]["type"] == "ready"
+    assert ("tx", {"id": "0", "type": "echo", "payload": 1}) in seen
+    assert any(
+        d == "rx" and r.get("type") == "response" and r.get("id") == "0"
+        for d, r in seen
+    )
+
+
+def test_on_record_raising_is_contained() -> None:
+    def boom(direction: str, record: dict) -> None:
+        raise RuntimeError("boom")
+
+    with PiProcess(on_record=boom) as process:
+        assert process.request("ping")["pong"] is True
+    assert "on_record raised" in process.stderr_tail
+
+
 def test_graceful_shutdown(proc: tuple[PiProcess, list[dict]]) -> None:
     process, _ = proc
     process.request("ping")

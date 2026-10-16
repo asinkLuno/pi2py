@@ -7,10 +7,14 @@ streaming ``run(input, stream=True) -> Iterator[RunEvent]``, and
 ``print_response(input)`` rendering the stream with rich.
 """
 
+import json
 import queue
+import sys
 import threading
+import time
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Literal, Self, overload
 
@@ -45,6 +49,22 @@ def load_skill(path: str | Path) -> str:
         file = file / "SKILL.md"
     _, body = _split_frontmatter(file.read_text(encoding="utf-8"))
     return body
+
+
+def _total_usage(messages: list[dict]) -> dict[str, int]:
+    """Sum usage over all messages.
+
+    ``RunOutput.usage`` only carries the last assistant message's numbers
+    (the sidecar returns ``last.usage``), so tool-using runs — multiple
+    provider turns — undercount without this. Non-numeric values (``cost``
+    is a nested dict) are skipped.
+    """
+    totals: dict[str, int] = {}
+    for m in messages:
+        for k, v in (m.get("usage") or {}).items():
+            if isinstance(v, (int, float)):
+                totals[k] = totals.get(k, 0) + v
+    return totals
 
 
 @dataclass
@@ -145,6 +165,11 @@ class Agent:
     pi's models.json uses. Each Agent owns one sidecar process unless
     ``process`` passes an existing :class:`PiProcess` to share.
 
+    ``audit_dir`` (with ``name``) turns on per-run audit logging: every
+    ``run``/``run_skill`` writes one summary JSONL entry — input, output,
+    aggregated usage, or the error — to
+    ``<audit_dir>/<name>-<timestamp>.jsonl``.
+
     Usage::
 
         agent = Agent(model="dots3-note-prev", provider=PROVIDER,
@@ -165,6 +190,8 @@ class Agent:
         skills: Sequence[str | Path] | None = None,
         mcp_servers: Sequence[McpServer] | None = None,
         session_id: str | None = None,
+        name: str | None = None,
+        audit_dir: str | Path | None = None,
         process: PiProcess | None = None,
     ) -> None:
         if isinstance(instructions, (list, tuple)):
@@ -188,6 +215,8 @@ class Agent:
             self._payload["mcpServers"] = [s.payload() for s in mcp_servers]
         self._process = process
         self._owns_process = process is None
+        self._name = name or "run"
+        self._audit_dir = Path(audit_dir) if audit_dir is not None else None
 
     @overload
     def run(self, input: str, *, stream: Literal[False] = ...) -> RunOutput: ...
@@ -238,7 +267,12 @@ class Agent:
         payload = {**self._payload, "instructions": instructions, "input": input}
         if stream:
             return self._run_streaming(payload)
-        data = self._process_request(payload)
+        try:
+            data = self._process_request(payload)
+        except BaseException as exc:
+            self._write_audit(input, None, exc)
+            raise
+        self._write_audit(input, data, None)
         usage = data.get("usage")
         messages = data.get("messages")
         return RunOutput(
@@ -282,13 +316,18 @@ class Agent:
 
         def work() -> None:
             try:
-                process.request(
+                data = process.request(
                     "agent.run",
                     {**payload, "stream": True},
                     on_event=deliver,
                 )
             except BaseException as exc:  # noqa: BLE001 — re-raised by the generator once the stream drains
                 failure.append(exc)
+                self._write_audit(str(payload.get("input", "")), None, exc)
+            else:
+                # written before the None sentinel, so the file exists by
+                # the time the generator is exhausted
+                self._write_audit(str(payload.get("input", "")), data, None)
             finally:
                 events.put(None)
 
@@ -300,6 +339,35 @@ class Agent:
                     raise failure[0]
                 return
             yield event
+
+    def _write_audit(
+        self, input: str, data: Record | None, error: BaseException | None
+    ) -> None:
+        """One summary entry per run to ``<audit_dir>/<name>-<ts>.jsonl``.
+
+        Failures are logged and re-raised by the caller — an audit log that
+        only remembers successes is not an audit log. Best effort on the
+        write itself: an unwritable audit dir must not lose a finished
+        model call, so it complains on stderr instead of raising.
+        """
+        if self._audit_dir is None:
+            return
+        entry: dict[str, object] = {"ts": time.time(), "name": self._name, "input": input}
+        if error is not None:
+            entry["error"] = repr(error)
+        else:
+            assert data is not None
+            messages = data.get("messages")
+            entry["content"] = str(data.get("content", ""))
+            entry["usage"] = _total_usage(messages if isinstance(messages, list) else [])
+        try:
+            self._audit_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%dT%H%M%S_%f")
+            (self._audit_dir / f"{self._name}-{ts}.jsonl").write_text(
+                json.dumps(entry, ensure_ascii=False) + "\n", encoding="utf-8"
+            )
+        except OSError as exc:
+            print(f"pi2py: audit log write failed: {exc!r}", file=sys.stderr)
 
     def close(self) -> None:
         """Close the sidecar process if this Agent spawned it."""

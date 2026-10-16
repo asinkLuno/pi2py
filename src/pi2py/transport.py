@@ -7,6 +7,9 @@ top of it. Protocol rules (mirroring pi's own RPC mode):
   go to stderr (kept in ``stderr_tail`` for error reports)
 - requests carry a string ``id``; responses echo it and may arrive out of
   order — always correlate by id
+- the ``on_record`` constructor callback taps every record in both
+  directions — ``on_record("tx" | "rx", record)`` — e.g. to mirror traffic
+  to a log or MLflow
 - ``event`` records are dispatched from the reader thread: records echoing a
   pending request's ``id`` go to that request's ``on_event`` callback
   (see :meth:`request`), the rest to the ``on_event`` constructor callback
@@ -30,6 +33,7 @@ from pi2py._node import find_node
 
 Record = dict[str, object]
 EventHandler = Callable[[Record], None]
+RecordHandler = Callable[[str, Record], None]
 
 _STARTUP_TIMEOUT = 15.0
 _CLOSE_TIMEOUT = 5.0
@@ -74,12 +78,14 @@ class PiProcess:
         sidecar_dir: Path | str | None = None,
         env: Mapping[str, str] | None = None,
         on_event: EventHandler | None = None,
+        on_record: RecordHandler | None = None,
         startup_timeout: float = _STARTUP_TIMEOUT,
     ) -> None:
         self._node_path = node_path
         self._sidecar_dir = Path(sidecar_dir) if sidecar_dir is not None else None
         self._env: dict[str, str] | None = dict(env) if env is not None else None
         self._on_event = on_event
+        self._on_record = on_record
         self._startup_timeout = startup_timeout
 
         self._proc: subprocess.Popen[bytes] | None = None
@@ -244,6 +250,8 @@ class PiProcess:
                 proc.stdin.flush()
             except (BrokenPipeError, OSError) as exc:
                 raise PiProcessError(self._death_message()) from exc
+        # tapped outside the write lock so a slow callback can't block sends
+        self._tap("tx", record)
 
     def _reader_loop(self) -> None:
         proc = self._proc
@@ -263,6 +271,7 @@ class PiProcess:
             except json.JSONDecodeError:
                 self._stderr_lines.append(f"[pi2py] non-JSON stdout line: {text[:200]}")
                 continue
+            self._tap("rx", record)  # before dispatch: response is tapped by the time request() returns
             self._dispatch(record)
         self._on_death()
 
@@ -301,6 +310,14 @@ class PiProcess:
                     self._stderr_lines.append(f"[pi2py] on_event raised: {exc!r}")
         else:
             self._stderr_lines.append(f"[pi2py] unknown record type: {rtype!r}")
+
+    def _tap(self, direction: str, record: Record) -> None:
+        if self._on_record is None:
+            return
+        try:
+            self._on_record(direction, record)
+        except Exception as exc:  # noqa: BLE001 — user callbacks must not kill transport threads
+            self._stderr_lines.append(f"[pi2py] on_record raised: {exc!r}")
 
     def _event_handler_for(self, record: Record) -> EventHandler | None:
         """An event echoing a pending request's id belongs to that request."""
