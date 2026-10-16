@@ -1,0 +1,10 @@
+{
+  "name": "pi2py-sidecar",
+  "private": true,
+  "type": "module",
+  "description": "Node-side host for pi2py. Dependencies are installed by the Python package into the user cache on first run (npm ci against this lockfile).",
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.3.0",
+    "@earendil-works/pi-ai": "1.3.0"
+  }
+}
