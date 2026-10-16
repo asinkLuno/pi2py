@@ -9,7 +9,7 @@ streams them as :class:`RunEvent`, and renders them with rich
 
 from pi2py._install import SidecarInstallError, ensure_sidecar, sidecar_cache_dir
 from pi2py._node import MIN_NODE, NodeNotFoundError, find_node
-from pi2py.agent import Agent, RunEvent, RunOutput, load_skill
+from pi2py.agent import Agent, McpServer, RunEvent, RunOutput, load_skill
 from pi2py.config import Pi2pyConfig
 from pi2py.render import RunPrinter
 from pi2py.transport import (
@@ -24,6 +24,7 @@ __version__ = "0.1.0"
 __all__ = [
     "MIN_NODE",
     "Agent",
+    "McpServer",
     "NodeNotFoundError",
     "Pi2pyConfig",
     "PiProcess",

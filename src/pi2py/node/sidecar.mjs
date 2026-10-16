@@ -47,6 +47,92 @@ async function loadPi() {
   return { Agent, piAi, openAICompletionsApi };
 }
 
+// --- MCP ------------------------------------------------------------------
+
+// Connections live for the whole sidecar process: the server process holds
+// state (e.g. a DB pool) that must survive runs. Keyed by the canonical
+// server definition, so identical definitions share one connection. No
+// explicit teardown — the server child exits on stdin EOF when we do.
+const mcpConnections = new Map();
+
+async function loadMcp() {
+  const [{ Client }, { StdioClientTransport }, { StreamableHTTPClientTransport }, { Type }] =
+    await Promise.all([
+      import("@modelcontextprotocol/sdk/client"),
+      import("@modelcontextprotocol/sdk/client/stdio.js"),
+      import("@modelcontextprotocol/sdk/client/streamableHttp.js"),
+      import("typebox"),
+    ]);
+  return { Client, StdioClientTransport, StreamableHTTPClientTransport, Type };
+}
+
+// MCP content -> pi-ai content. text/image blocks are shape-identical, so
+// they pass through; everything else (audio, resource) is stringified.
+function mcpContentToPi(content) {
+  return (content ?? []).map((item) =>
+    item.type === "text" || item.type === "image" ? item : { type: "text", text: JSON.stringify(item) },
+  );
+}
+
+// One MCP server definition -> connected client + its tools as AgentTools.
+// `env` replaces the SDK's default inherited set (PATH, HOME, ...) — only
+// passed when the caller provided one. Protocol-level errors from callTool
+// are rethrown: the agent loop turns them into error tool results the
+// model can see and react to.
+async function connectMcpServer(def) {
+  const { Client, StdioClientTransport, StreamableHTTPClientTransport, Type } = await loadMcp();
+  let transport;
+  if (def.url) {
+    transport = new StreamableHTTPClientTransport(new URL(def.url));
+  } else if (def.command) {
+    transport = new StdioClientTransport({
+      command: def.command,
+      args: def.args ?? [],
+      ...(def.env ? { env: def.env } : {}),
+    });
+  } else {
+    throw new Error("mcp server needs command (stdio) or url (http)");
+  }
+  const client = new Client({ name: "pi2py", version: "1" });
+  await client.connect(transport);
+  const { tools } = await client.listTools();
+  return tools.map((tool) => ({
+    // shortcut: no cross-server name prefixing; a duplicate name shadows earlier ones
+    name: tool.name,
+    label: tool.name,
+    description: tool.description ?? "",
+    parameters: Type.Unsafe(tool.inputSchema ?? { type: "object" }),
+    execute: async (toolCallId, params, signal) => {
+      const result = await client.callTool({ name: tool.name, arguments: params }, undefined, { signal });
+      return {
+        content: mcpContentToPi(result.content),
+        details: result,
+        ...(result.isError ? { isError: true } : {}),
+      };
+    },
+  }));
+}
+
+// Get-or-connect every server in `defs`; failures evict the cache entry so
+// a later run can retry.
+async function mcpTools(defs) {
+  const tools = [];
+  for (const def of defs ?? []) {
+    const key = JSON.stringify(def);
+    if (!mcpConnections.has(key)) {
+      mcpConnections.set(
+        key,
+        connectMcpServer(def).catch((err) => {
+          mcpConnections.delete(key);
+          throw err;
+        }),
+      );
+    }
+    tools.push(...(await mcpConnections.get(key)));
+  }
+  return tools;
+}
+
 // Wire shape for forwarded agent events: message_update keeps only the delta
 // (the event's partial message is the whole transcript-so-far — O(n²) bytes
 // over a stream); message_end resyncs complete state.
@@ -85,6 +171,8 @@ const commands = {
   //
   // `provider` is a models.json custom-provider entry (id, name, baseUrl,
   // api, apiKey, compat, models[]); `model` picks one of its model ids.
+  // `mcpServers[]` (command/args/env for stdio, or url for streamable HTTP)
+  // are connected and their tools exposed to the agent.
   // With `stream: true`, pi AgentEvents are forwarded as event records
   // (tagged with this request's id) before the response.
   "agent.run": async (msg) => {
@@ -130,9 +218,17 @@ const commands = {
       );
     }
 
+    // MCP servers connect (once per process, cached) before any model call,
+    // so a dead server fails the command without touching the provider.
+    const tools = await mcpTools(msg.mcpServers);
+
     const agent = new Agent({
       streamFn: (m, context, options) => models.streamSimple(m, context, options),
-      initialState: msg.instructions ? { model, systemPrompt: msg.instructions } : { model },
+      initialState: {
+        model,
+        ...(msg.instructions ? { systemPrompt: msg.instructions } : {}),
+        ...(tools.length > 0 ? { tools } : {}),
+      },
       ...(msg.sessionId ? { sessionId: msg.sessionId } : {}),
     });
     const unsubscribe = msg.stream

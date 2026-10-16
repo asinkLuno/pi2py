@@ -6,6 +6,7 @@ theme:
 nav:
   - 首页: index.md
   - Sidecar 机制: sidecar.md
+  - 工具调用（MCP）: tools-mcp.md
 markdown_extensions:
   - admonition
   - pymdownx.superfences:

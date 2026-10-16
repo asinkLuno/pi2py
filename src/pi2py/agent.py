@@ -48,6 +48,34 @@ def load_skill(path: str | Path) -> str:
 
 
 @dataclass
+class McpServer:
+    """An MCP server the sidecar connects to, exposing its tools to the agent.
+
+    Exactly one of stdio (``command``/``args``/``env``) or streamable HTTP
+    (``url``). ``env``, when given, *replaces* the default inherited
+    environment — PATH and friends are gone unless included.
+    """
+
+    command: str | None = None
+    args: Sequence[str] = ()
+    env: Mapping[str, str] | None = None
+    url: str | None = None
+
+    def payload(self) -> dict[str, object]:
+        if (self.url is None) == (self.command is None):
+            raise ValueError(
+                "McpServer needs exactly one of command (stdio) or url (http)"
+            )
+        if self.url is not None:
+            return {"url": self.url}
+        return {
+            "command": self.command,
+            "args": list(self.args),
+            **({"env": dict(self.env)} if self.env else {}),
+        }
+
+
+@dataclass
 class RunOutput:
     """Result of one :meth:`Agent.run` — agno's RunOutput shape."""
 
@@ -98,7 +126,11 @@ class RunEvent:
 
 def _ame_delta(raw: Mapping[str, object], event_type: str, kind: str) -> str:
     ame = raw.get("assistantMessageEvent")
-    if event_type == "message_update" and isinstance(ame, Mapping) and ame.get("type") == kind:
+    if (
+        event_type == "message_update"
+        and isinstance(ame, Mapping)
+        and ame.get("type") == kind
+    ):
         delta = ame.get("delta")
         if isinstance(delta, str):
             return delta
@@ -117,7 +149,9 @@ class Agent:
 
         agent = Agent(model="dots3-note-prev", provider=PROVIDER,
                       instructions="Answer in Chinese.",
-                      skills=["/path/to/humanizer"])
+                      skills=["/path/to/humanizer"],
+                      mcp_servers=[McpServer(command="python",
+                                             args=["-m", "mydb.mcp_server"])])
         result = agent.run("hello")
         print(result.content)
     """
@@ -129,6 +163,7 @@ class Agent:
         provider: Mapping[str, object],
         instructions: str | Sequence[str] | None = None,
         skills: Sequence[str | Path] | None = None,
+        mcp_servers: Sequence[McpServer] | None = None,
         session_id: str | None = None,
         process: PiProcess | None = None,
     ) -> None:
@@ -138,13 +173,19 @@ class Agent:
             # Forced injection: skill bodies go straight into the system
             # prompt, appended after the base instructions.
             skill_text = "\n\n".join(load_skill(s) for s in skills)
-            instructions = f"{instructions}\n\n{skill_text}" if instructions else skill_text
+            instructions = (
+                f"{instructions}\n\n{skill_text}" if instructions else skill_text
+            )
         self._payload: dict[str, object] = {
             "model": model,
             "provider": dict(provider),
             "instructions": instructions,
             "sessionId": session_id,
         }
+        if mcp_servers:
+            # Validated here (payload() checks shape) so a bad definition
+            # fails at construction, not on first run.
+            self._payload["mcpServers"] = [s.payload() for s in mcp_servers]
         self._process = process
         self._owns_process = process is None
 
@@ -154,7 +195,9 @@ class Agent:
     @overload
     def run(self, input: str, *, stream: Literal[True]) -> Iterator[RunEvent]: ...
 
-    def run(self, input: str, *, stream: bool = False) -> "RunOutput | Iterator[RunEvent]":
+    def run(
+        self, input: str, *, stream: bool = False
+    ) -> "RunOutput | Iterator[RunEvent]":
         """Run one prompt to completion and return the assistant output.
 
         With ``stream=True``, return a generator yielding :class:`RunEvent`
@@ -165,10 +208,14 @@ class Agent:
         return self._run(self._payload.get("instructions"), input, stream)
 
     @overload
-    def run_skill(self, skill: str | Path, input: str, *, stream: Literal[False] = ...) -> RunOutput: ...
+    def run_skill(
+        self, skill: str | Path, input: str, *, stream: Literal[False] = ...
+    ) -> RunOutput: ...
 
     @overload
-    def run_skill(self, skill: str | Path, input: str, *, stream: Literal[True]) -> Iterator[RunEvent]: ...
+    def run_skill(
+        self, skill: str | Path, input: str, *, stream: Literal[True]
+    ) -> Iterator[RunEvent]: ...
 
     def run_skill(
         self, skill: str | Path, input: str, *, stream: bool = False

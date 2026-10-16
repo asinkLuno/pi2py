@@ -5,6 +5,7 @@ import os
 import shutil
 
 import pytest
+from conftest import PROVIDER
 from rich.console import Console
 
 from pi2py import Agent, SidecarCommandError
@@ -13,33 +14,6 @@ pytestmark = pytest.mark.skipif(
     shutil.which("node") is None and os.environ.get("PI2PY_NODE") is None,
     reason="Node.js not available",
 )
-
-# The OpenAI-compatible test provider documented in CLAUDE.md, as a
-# models.json custom-provider entry.
-PROVIDER = {
-    "id": "dianxian-note",
-    "name": "Diandian Note Prev",
-    "baseUrl": "https://note3-prev-api.askdiandian.com/v1",
-    "api": "openai-completions",
-    "apiKey": "ak_DUJWaGqkrcbM4wXZXnHbVjzNgy3MK",
-    "compat": {
-        "supportsStore": False,
-        "supportsDeveloperRole": False,
-        "supportsReasoningEffort": False,
-        "maxTokensField": "max_tokens",
-    },
-    "models": [
-        {
-            "id": "dots3-note-prev",
-            "name": "Dots3 Note Prev",
-            "reasoning": True,
-            "input": ["text"],
-            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-            "contextWindow": 128000,
-            "maxTokens": 16384,
-        }
-    ],
-}
 
 
 def test_agent_runs_a_task() -> None:
@@ -80,8 +54,12 @@ def test_agent_streams_events() -> None:
 
 
 def test_print_response_renders_to_console() -> None:
-    agent = Agent(model="dots3-note-prev", provider=PROVIDER, instructions=["Answer in Chinese."])
+    agent = Agent(
+        model="dots3-note-prev", provider=PROVIDER, instructions=["Answer in Chinese."]
+    )
     buf = io.StringIO()
-    agent.print_response("用一句话解释什么是 JSONL 协议", console=Console(file=buf, width=80))
+    agent.print_response(
+        "用一句话解释什么是 JSONL 协议", console=Console(file=buf, width=80)
+    )
     assert buf.getvalue().strip()
     agent.close()

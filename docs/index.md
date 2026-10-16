@@ -1,6 +1,6 @@
 # pi2py
 
-从 Python 同步调用 [pi](https://github.com/earendil-works/pi) 的 agent 核心（`@earendil-works/pi-agent-core`）的桥接库。API 风格仿 [agno](https://github.com/agno-agi/agno)：`Agent.run()` 返回 `RunOutput`，`run(stream=True)` 产出流式 `RunEvent`，`print_response()` 用 rich 渲染到终端；Python 函数当工具是下一个里程碑。
+从 Python 同步调用 [pi](https://github.com/earendil-works/pi) 的 agent 核心（`@earendil-works/pi-agent-core`）的桥接库。API 风格仿 [agno](https://github.com/agno-agi/agno)：`Agent.run()` 返回 `RunOutput`，`run(stream=True)` 产出流式 `RunEvent`，`print_response()` 用 rich 渲染到终端；工具调用（数据库等业务函数）经 MCP 接入，见[工具调用（MCP）](tools-mcp.md)。
 
 ## 快速开始
 
@@ -19,15 +19,17 @@ PROVIDER = {
         "supportsReasoningEffort": False,
         "maxTokensField": "max_tokens",
     },
-    "models": [{
-        "id": "dots3-note-prev",
-        "name": "Dots3 Note Prev",
-        "reasoning": True,
-        "input": ["text"],
-        "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
-        "contextWindow": 128000,
-        "maxTokens": 16384,
-    }],
+    "models": [
+        {
+            "id": "dots3-note-prev",
+            "name": "Dots3 Note Prev",
+            "reasoning": True,
+            "input": ["text"],
+            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0},
+            "contextWindow": 128000,
+            "maxTokens": 16384,
+        }
+    ],
 }
 
 agent = Agent(model="dots3-note-prev", provider=PROVIDER, instructions="用中文回答。")
@@ -47,6 +49,7 @@ for event in agent.run("你好", stream=True):
 ## 文档
 
 - [Sidecar 机制](sidecar.md) — 架构总览、首次安装、Node 发现、JSONL 协议与生命周期
+- [工具调用（MCP）](tools-mcp.md) — 为什么不做反向 RPC、MCP 路线架构、agno 迁移映射
 
 ## 构建文档
 
