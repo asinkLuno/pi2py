@@ -6,7 +6,7 @@
 
 - `src/pi2py/node/`：随 wheel 分发的 Node sidecar（`sidecar.mjs` + 锁死的 `package.json`/`package-lock.json`，依赖 `@earendil-works/pi-agent-core@1.3.0` + `pi-ai@1.3.0`）
 - `config.py`：`Pi2pyConfig`（pydantic-settings，`$PI2PY_*` 环境变量）
-- `agent.py`：agno 风格 `Agent` 门面（`model`/`provider`/`instructions`/`session_id`；`run(input) -> RunOutput`，`run(input, stream=True) -> Iterator[RunEvent]`，`print_response(input)`）；provider 用 models.json 自定义条目，sidecar 侧 `agent.run` 命令用 `createProvider` + `openAICompletionsApi()` 装配，`stream: true` 时经 `Agent.subscribe` 转发 AgentEvent（`message_update` 只带 delta）
+- `agent.py`：agno 风格 `Agent` 门面（`model`/`provider`/`instructions`/`skills`/`session_id`；`run(input) -> RunOutput`，`run(input, stream=True) -> Iterator[RunEvent]`，`print_response(input)`）；provider 用 models.json 自定义条目，sidecar 侧 `agent.run` 命令用 `createProvider` + `openAICompletionsApi()` 装配，`stream: true` 时经 `Agent.subscribe` 转发 AgentEvent（`message_update` 只带 delta）。`skills=[路径...]` 强制注入：`load_skill()` 读 SKILL.md（目录或文件均可）、剥掉 YAML frontmatter、拼进 instructions；`run_skill(path, input)` 是 `/skill:name args` 等效物：路径由调用方显传入（不做任何名字发现/目录扫描），正文仅注入本次 run——纯 Python 侧，不动 sidecar
 - `render.py`：`RunPrinter`——把流式 RunEvent 用 rich 渲染到终端（dim 思考 + Live markdown，思考不落最终输出），驱动 `Agent.print_response`
 - `_install.py`：首次使用时把 sidecar 拷到 `~/.cache/pi2py/sidecar-<lockhash>/` 并 `npm ci --ignore-scripts`（`$PI2PY_SIDECAR_DIR` 可覆盖）
 - `_node.py`：Node ≥22.19 发现（`$PI2PY_NODE` → PATH → nvm/volta/fnm/asdf，nvm 取最新）

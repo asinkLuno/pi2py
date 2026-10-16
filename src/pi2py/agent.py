@@ -11,12 +11,40 @@ import queue
 import threading
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal, Self, overload
 
 from rich.console import Console
 
 from pi2py.render import RunPrinter
 from pi2py.transport import PiProcess, Record
+
+
+def _split_frontmatter(text: str) -> tuple[str, str]:
+    """Split leading YAML frontmatter into ``(block, body)``.
+
+    First closing fence only: ``---`` rules in the body come after it and
+    stay in the body.
+    """
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            return text[4:end], text[end + 4 :].lstrip("\n")
+    return "", text
+
+
+def load_skill(path: str | Path) -> str:
+    """Read a skill's instructions for forced injection into the prompt.
+
+    ``path`` is a SKILL.md file, a directory containing one, or any markdown
+    file. YAML frontmatter is stripped — it carries routing metadata
+    (name/description), not instructions.
+    """
+    file = Path(path)
+    if file.is_dir():
+        file = file / "SKILL.md"
+    _, body = _split_frontmatter(file.read_text(encoding="utf-8"))
+    return body
 
 
 @dataclass
@@ -88,7 +116,8 @@ class Agent:
     Usage::
 
         agent = Agent(model="dots3-note-prev", provider=PROVIDER,
-                      instructions="Answer in Chinese.")
+                      instructions="Answer in Chinese.",
+                      skills=["/path/to/humanizer"])
         result = agent.run("hello")
         print(result.content)
     """
@@ -99,11 +128,17 @@ class Agent:
         model: str,
         provider: Mapping[str, object],
         instructions: str | Sequence[str] | None = None,
+        skills: Sequence[str | Path] | None = None,
         session_id: str | None = None,
         process: PiProcess | None = None,
     ) -> None:
         if isinstance(instructions, (list, tuple)):
             instructions = "\n".join(instructions)
+        if skills:
+            # Forced injection: skill bodies go straight into the system
+            # prompt, appended after the base instructions.
+            skill_text = "\n\n".join(load_skill(s) for s in skills)
+            instructions = f"{instructions}\n\n{skill_text}" if instructions else skill_text
         self._payload: dict[str, object] = {
             "model": model,
             "provider": dict(provider),
@@ -127,9 +162,36 @@ class Agent:
         event's ``.content``. The sidecar run always finishes, even if the
         generator is abandoned early.
         """
+        return self._run(self._payload.get("instructions"), input, stream)
+
+    @overload
+    def run_skill(self, skill: str | Path, input: str, *, stream: Literal[False] = ...) -> RunOutput: ...
+
+    @overload
+    def run_skill(self, skill: str | Path, input: str, *, stream: Literal[True]) -> Iterator[RunEvent]: ...
+
+    def run_skill(
+        self, skill: str | Path, input: str, *, stream: bool = False
+    ) -> "RunOutput | Iterator[RunEvent]":
+        """``/skill:name input`` equivalent: run one prompt with a skill's
+        full instructions force-injected, for this run only.
+
+        ``skill`` is a path to a SKILL.md file or its directory — no name
+        discovery; the caller owns where skills live. The skill body is
+        appended after this agent's base instructions; later ``run`` calls
+        are unaffected.
+        """
+        body = load_skill(skill)
+        base = self._payload.get("instructions")
+        return self._run(f"{base}\n\n{body}" if base else body, input, stream)
+
+    def _run(
+        self, instructions: str | None, input: str, stream: bool
+    ) -> "RunOutput | Iterator[RunEvent]":
+        payload = {**self._payload, "instructions": instructions, "input": input}
         if stream:
-            return self._run_streaming(input)
-        data = self._process_request({**self._payload, "input": input})
+            return self._run_streaming(payload)
+        data = self._process_request(payload)
         usage = data.get("usage")
         messages = data.get("messages")
         return RunOutput(
@@ -147,7 +209,7 @@ class Agent:
     ) -> None:
         """Run a prompt and render it live in the terminal with rich."""
         printer = RunPrinter(console=console, markdown=markdown)
-        for event in self._run_streaming(input):
+        for event in self._run_streaming({**self._payload, "input": input}):
             printer.handle(event)
 
     def _process_request(self, payload: Mapping[str, object]) -> Record:
@@ -157,7 +219,7 @@ class Agent:
             self._process = process
         return self._process.request("agent.run", payload)
 
-    def _run_streaming(self, input: str) -> Iterator[RunEvent]:
+    def _run_streaming(self, payload: Mapping[str, object]) -> Iterator[RunEvent]:
         process = self._process
         if process is None:
             process = PiProcess()
@@ -175,7 +237,7 @@ class Agent:
             try:
                 process.request(
                     "agent.run",
-                    {**self._payload, "input": input, "stream": True},
+                    {**payload, "stream": True},
                     on_event=deliver,
                 )
             except BaseException as exc:  # noqa: BLE001 — re-raised by the generator once the stream drains
