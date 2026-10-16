@@ -1,8 +1,9 @@
 """Transport-layer tests for the M1 JSONL protocol client.
 
-The session-scoped ``sidecar_env`` fixture points PI2PY_SIDECAR_DIR at a
-temp dir, so the first test exercises the full first-run path (copy sidecar
-files + npm ci + spawn). Subsequent processes reuse the install.
+The session-scoped ``sidecar_env`` fixture (conftest.py) points
+PI2PY_SIDECAR_DIR at a temp dir, so the first test exercises the full
+first-run path (copy sidecar files + npm ci + spawn). Subsequent processes
+reuse the install.
 """
 
 import os
@@ -26,11 +27,6 @@ pytestmark = pytest.mark.skipif(
     shutil.which("node") is None and os.environ.get("PI2PY_NODE") is None,
     reason="Node.js not available",
 )
-
-
-@pytest.fixture(scope="session", autouse=True)
-def sidecar_env(tmp_path_factory: pytest.TempPathFactory) -> None:
-    os.environ["PI2PY_SIDECAR_DIR"] = str(tmp_path_factory.mktemp("sidecar"))
 
 
 @pytest.fixture

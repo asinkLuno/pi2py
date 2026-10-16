@@ -37,6 +37,16 @@ function versionAtLeast(v, min) {
 
 // --- commands -------------------------------------------------------------
 
+// Lazy imports keep `ping` startup light; the pi packages load on first agent use.
+async function loadPi() {
+  const [{ Agent }, piAi, { openAICompletionsApi }] = await Promise.all([
+    import("@earendil-works/pi-agent-core"),
+    import("@earendil-works/pi-ai"),
+    import("@earendil-works/pi-ai/compat"),
+  ]);
+  return { Agent, piAi, openAICompletionsApi };
+}
+
 const commands = {
   ping: () => ({ pong: true, node: process.version }),
 
@@ -58,6 +68,75 @@ const commands = {
     return { emitted: true };
   },
 
+  // Run one prompt to completion on a fresh in-process agent.
+  //
+  // `provider` is a models.json custom-provider entry (id, name, baseUrl,
+  // api, apiKey, compat, models[]); `model` picks one of its model ids.
+  "agent.run": async (msg) => {
+    const { Agent, piAi, openAICompletionsApi } = await loadPi();
+
+    const entry = msg.provider ?? {};
+    if (!entry.id || !entry.baseUrl || !Array.isArray(entry.models)) {
+      throw new Error("provider entry needs id, baseUrl and models[]");
+    }
+    const apiImpls = { "openai-completions": openAICompletionsApi };
+    const api = entry.api ?? "openai-completions";
+    const apiImpl = apiImpls[api];
+    if (!apiImpl) {
+      throw new Error(`unsupported provider api: ${api}`);
+    }
+
+    const provider = piAi.createProvider({
+      id: entry.id,
+      name: entry.name ?? entry.id,
+      baseUrl: entry.baseUrl,
+      auth: {
+        // Static key from the provider entry — models.json carries it inline.
+        apiKey: {
+          name: `${entry.name ?? entry.id} API key`,
+          resolve: async () => ({ auth: { apiKey: entry.apiKey } }),
+        },
+      },
+      models: entry.models.map((m) => ({
+        ...m,
+        api,
+        provider: entry.id,
+        baseUrl: entry.baseUrl,
+        ...(entry.compat ? { compat: entry.compat } : {}),
+      })),
+      api: apiImpl(),
+    });
+    const models = piAi.createModels();
+    models.setProvider(provider);
+    const model = models.getModel(entry.id, msg.model);
+    if (!model) {
+      throw new Error(
+        `model ${msg.model} not in provider ${entry.id}; available: ${entry.models.map((m) => m.id).join(", ")}`,
+      );
+    }
+
+    const agent = new Agent({
+      streamFn: (m, context, options) => models.streamSimple(m, context, options),
+      initialState: msg.instructions ? { model, systemPrompt: msg.instructions } : { model },
+      ...(msg.sessionId ? { sessionId: msg.sessionId } : {}),
+    });
+    await agent.prompt(msg.input);
+    await agent.waitForIdle();
+
+    if (agent.state.errorMessage) {
+      throw new Error(agent.state.errorMessage);
+    }
+    const last = [...agent.state.messages].reverse().find((m) => m.role === "assistant");
+    if (!last) {
+      throw new Error("agent produced no assistant message");
+    }
+    return {
+      content: piAi.contentText(last.content),
+      usage: last.usage ?? null,
+      messages: agent.state.messages,
+    };
+  },
+
   die: (msg) => {
     log("die command received");
     const code = Number.isInteger(msg.code) ? msg.code : 1;
@@ -71,7 +150,13 @@ async function handle(msg) {
   if (fn === undefined) {
     return { ok: false, error: `unknown command: ${msg.type}` };
   }
-  return { ok: true, data: await fn(msg) };
+  try {
+    return { ok: true, data: await fn(msg) };
+  } catch (err) {
+    // Command failures (bad provider config, network, model errors) must
+    // surface as error responses, not kill the process.
+    return { ok: false, error: err?.message ?? String(err) };
+  }
 }
 
 // --- JSONL framing --------------------------------------------------------

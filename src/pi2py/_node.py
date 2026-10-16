@@ -7,6 +7,8 @@ import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
+from pi2py.config import Pi2pyConfig
+
 MIN_NODE = (22, 19, 0)
 
 _VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
@@ -43,7 +45,7 @@ def _node_version(node: str) -> tuple[int, int, int] | None:
 
 def _candidates() -> Iterator[str]:
     # Explicit override: if set, it is the only candidate.
-    if (override := os.environ.get("PI2PY_NODE")):
+    if (override := Pi2pyConfig().node):
         yield override
         return
     if (found := shutil.which("node")):

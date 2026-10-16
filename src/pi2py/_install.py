@@ -18,6 +18,7 @@ from pathlib import Path
 import platformdirs
 
 from pi2py._node import find_node
+from pi2py.config import Pi2pyConfig
 
 SIDECAR_FILES = ("sidecar.mjs", "package.json", "package-lock.json")
 
@@ -40,8 +41,8 @@ def sidecar_cache_dir() -> Path:
     $PI2PY_SIDECAR_DIR overrides the default cache location (useful for
     tests and for sharing one install across projects).
     """
-    if (override := os.environ.get("PI2PY_SIDECAR_DIR")):
-        return Path(override)
+    if (override := Pi2pyConfig().sidecar_dir):
+        return override
     return platformdirs.user_cache_path("pi2py") / f"sidecar-{_lock_hash()}"
 
 
