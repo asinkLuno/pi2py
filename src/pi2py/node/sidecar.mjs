@@ -1,7 +1,7 @@
 // pi2py sidecar: Node-side host for the pi agent runtime.
 //
-// M1 scope: transport only — JSONL framing, command dispatch, lifecycle.
-// Agent wiring (prompt/event streaming, remote tools) plugs into `commands`.
+// Transport (JSONL framing, command dispatch, lifecycle) plus the agent
+// wiring (prompt/event streaming, MCP tools) in `commands`.
 //
 // Protocol (mirrors pi's own RPC mode, packages/coding-agent/docs/rpc.md):
 //   * stdin/stdout carry JSONL records: one JSON object per line,
@@ -182,10 +182,8 @@ const commands = {
     if (!entry.id || !entry.baseUrl || !Array.isArray(entry.models)) {
       throw new Error("provider entry needs id, baseUrl and models[]");
     }
-    const apiImpls = { "openai-completions": openAICompletionsApi };
     const api = entry.api ?? "openai-completions";
-    const apiImpl = apiImpls[api];
-    if (!apiImpl) {
+    if (api !== "openai-completions") {
       throw new Error(`unsupported provider api: ${api}`);
     }
 
@@ -207,7 +205,7 @@ const commands = {
         baseUrl: entry.baseUrl,
         ...(entry.compat ? { compat: entry.compat } : {}),
       })),
-      api: apiImpl(),
+      api: openAICompletionsApi(),
     });
     const models = piAi.createModels();
     models.setProvider(provider);
@@ -250,13 +248,12 @@ const commands = {
     if (agent.state.errorMessage) {
       throw new Error(agent.state.errorMessage);
     }
-    const last = [...agent.state.messages].reverse().find((m) => m.role === "assistant");
+    const last = agent.state.messages.findLast((m) => m.role === "assistant");
     if (!last) {
       throw new Error("agent produced no assistant message");
     }
     return {
       content: piAi.contentText(last.content),
-      usage: last.usage ?? null,
       messages: agent.state.messages,
     };
   },
@@ -288,8 +285,9 @@ async function handle(msg) {
 // U+2028/U+2029, which are legal inside JSON strings.
 
 let buf = "";
-let busy = false;
-const queue = [];
+// Commands run one at a time: a long agent.run never interleaves with the
+// next command (responses correlate by id, not order).
+let chain = Promise.resolve();
 
 process.stdin.setEncoding("utf8");
 
@@ -297,37 +295,23 @@ process.stdin.on("data", (chunk) => {
   buf += chunk;
   let idx;
   while ((idx = buf.indexOf("\n")) >= 0) {
-    const line = buf.slice(0, idx);
+    const line = buf.slice(0, idx).replace(/\r$/, "");
     buf = buf.slice(idx + 1);
-    queue.push(line.replace(/\r$/, ""));
+    chain = chain.then(() => handleLine(line));
   }
-  void drain();
 });
 
-async function drain() {
-  if (busy) return;
-  busy = true;
+async function handleLine(line) {
+  if (line.trim() === "") return;
+  let msg;
   try {
-    while (queue.length > 0) {
-      const line = queue.shift();
-      if (line.trim() === "") continue;
-      let msg;
-      try {
-        msg = JSON.parse(line);
-      } catch {
-        send({ type: "response", id: null, success: false, error: "parse error: line is not JSON" });
-        continue;
-      }
-      const outcome = await handle(msg);
-      if (outcome.ok) {
-        send({ type: "response", id: msg.id ?? null, success: true, data: outcome.data });
-      } else {
-        send({ type: "response", id: msg.id ?? null, success: false, error: outcome.error });
-      }
-    }
-  } finally {
-    busy = false;
+    msg = JSON.parse(line);
+  } catch {
+    send({ type: "response", id: null, success: false, error: "parse error: line is not JSON" });
+    return;
   }
+  const { ok, data, error } = await handle(msg);
+  send({ type: "response", id: msg.id ?? null, success: ok, ...(ok ? { data } : { error }) });
 }
 
 process.stdin.on("end", () => {
@@ -335,25 +319,24 @@ process.stdin.on("end", () => {
   process.exit(0);
 });
 
-process.on("uncaughtException", (err) => {
-  log("uncaught exception:", err?.stack ?? String(err));
+// Both process-fatal paths: stderr log, best-effort fatal record, exit.
+function fatal(detail, message) {
+  log(detail);
   try {
-    send({ type: "fatal", message: String(err?.message ?? err) });
+    send({ type: "fatal", message: String(message) });
   } catch {
-    // stdout already gone; stderr log above is all we can do
+    // stdout already gone; the stderr log above is all we can do
   }
   process.exit(1);
-});
+}
 
-process.on("unhandledRejection", (reason) => {
-  log("unhandled rejection:", String(reason));
-  try {
-    send({ type: "fatal", message: String(reason) });
-  } catch {
-    // stdout already gone
-  }
-  process.exit(1);
-});
+process.on("uncaughtException", (err) =>
+  fatal(`uncaught exception: ${err?.stack ?? String(err)}`, err?.message ?? err),
+);
+
+process.on("unhandledRejection", (reason) =>
+  fatal(`unhandled rejection: ${reason}`, reason),
+);
 
 // --- startup --------------------------------------------------------------
 

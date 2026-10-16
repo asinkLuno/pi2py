@@ -58,9 +58,7 @@ def main() -> None:
     with agent:
         agent.run("用一句话解释什么是 JSONL 协议")
         result = agent.run("用 add 工具算 123 + 459")
-        # RunOutput.usage is the LAST turn only; audit entries carry the
-        # whole-run aggregate (the two differ on tool-using runs).
-        print("last-turn usage:", result.usage)
+        print("usage:", result.usage)
     print("\nlog files:")
     for f in sorted(Path("logs").glob("compute-*.jsonl")):
         print(" ", f)

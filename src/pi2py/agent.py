@@ -16,7 +16,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Self, cast, overload
+from typing import Literal, Self, overload
 
 from rich.console import Console
 
@@ -54,10 +54,9 @@ def load_skill(path: str | Path) -> str:
 def _total_usage(messages: list[dict]) -> dict[str, int]:
     """Sum usage over all messages.
 
-    ``RunOutput.usage`` only carries the last assistant message's numbers
-    (the sidecar returns ``last.usage``), so tool-using runs — multiple
-    provider turns — undercount without this. Non-numeric values (``cost``
-    is a nested dict) are skipped.
+    Each assistant message's ``usage`` covers only its own provider turn;
+    a tool-using run spans several, so totals must be summed. Non-numeric
+    values (``cost`` is a nested dict) are skipped.
     """
     totals: dict[str, int] = {}
     for m in messages:
@@ -194,19 +193,19 @@ class Agent:
         audit_dir: str | Path | None = None,
         process: PiProcess | None = None,
     ) -> None:
-        if isinstance(instructions, (list, tuple)):
-            instructions = "\n".join(instructions)
+        if isinstance(instructions, str):
+            base = instructions
+        else:
+            base = "\n".join(instructions) if instructions is not None else None
         if skills:
             # Forced injection: skill bodies go straight into the system
             # prompt, appended after the base instructions.
             skill_text = "\n\n".join(load_skill(s) for s in skills)
-            instructions = (
-                f"{instructions}\n\n{skill_text}" if instructions else skill_text
-            )
+            base = f"{base}\n\n{skill_text}" if base else skill_text
+        self._instructions = base
         self._payload: dict[str, object] = {
             "model": model,
             "provider": dict(provider),
-            "instructions": instructions,
             "sessionId": session_id,
         }
         if mcp_servers:
@@ -234,9 +233,7 @@ class Agent:
         event's ``.content``. The sidecar run always finishes, even if the
         generator is abandoned early.
         """
-        return self._run(
-            cast("str | None", self._payload.get("instructions")), input, stream
-        )
+        return self._run(self._instructions, input, stream)
 
     @overload
     def run_skill(
@@ -260,7 +257,7 @@ class Agent:
         are unaffected.
         """
         body = load_skill(skill)
-        base = self._payload.get("instructions")
+        base = self._instructions
         return self._run(f"{base}\n\n{body}" if base else body, input, stream)
 
     def _run(
@@ -270,17 +267,17 @@ class Agent:
         if stream:
             return self._run_streaming(payload)
         try:
-            data = self._process_request(payload)
+            data = self._ensure_process().request("agent.run", payload)
         except BaseException as exc:
             self._write_audit(input, None, exc)
             raise
         self._write_audit(input, data, None)
-        usage = data.get("usage")
         messages = data.get("messages")
+        messages = messages if isinstance(messages, list) else []
         return RunOutput(
             content=str(data.get("content", "")),
-            usage=usage if isinstance(usage, dict) else None,
-            messages=messages if isinstance(messages, list) else [],
+            usage=_total_usage(messages) or None,
+            messages=messages,
         )
 
     def print_response(
@@ -292,22 +289,18 @@ class Agent:
     ) -> None:
         """Run a prompt and render it live in the terminal with rich."""
         printer = RunPrinter(console=console, markdown=markdown)
-        for event in self._run_streaming({**self._payload, "input": input}):
+        for event in self.run(input, stream=True):
             printer.handle(event)
 
-    def _process_request(self, payload: Mapping[str, object]) -> Record:
+    def _ensure_process(self) -> PiProcess:
+        """Spawn the sidecar on first use."""
         if self._process is None:
-            process = PiProcess()
-            process.start()
-            self._process = process
-        return self._process.request("agent.run", payload)
+            self._process = PiProcess()
+            self._process.start()
+        return self._process
 
     def _run_streaming(self, payload: Mapping[str, object]) -> Iterator[RunEvent]:
-        process = self._process
-        if process is None:
-            process = PiProcess()
-            process.start()
-            self._process = process
+        process = self._ensure_process()
         events: queue.SimpleQueue[RunEvent | None] = queue.SimpleQueue()
         failure: list[BaseException] = []
 

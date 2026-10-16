@@ -95,7 +95,7 @@ sequenceDiagram
     P->>S: {"id":"7","type":"agent.run",...} + LF
     S->>S: JSONL 分帧（只按 \n 切），命令顺序入队执行
     S->>A: 懒加载 pi → createProvider + openAICompletionsApi<br>createModels → new Agent(...).prompt(input) → waitForIdle()
-    A-->>S: 最后一条 assistant 消息 + usage
+    A-->>S: 全部 messages（取最后一条 assistant 的 content）
     S-->>R: {"type":"response","id":"7","success":true,"data":{...}}
     R->>R: 按 id 取出 pending，填 result，event.set()
     R-->>T: 唤醒阻塞中的 request()

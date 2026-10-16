@@ -18,7 +18,7 @@ repos:
         types: [python]
       - id: vulture
         name: vulture
-        entry: .venv/bin/vulture src/pi2py --ignore-names 'content,run_skill,print_response,node_version,exit_code,alive,model_config,exc_info'
+        entry: .venv/bin/vulture src/pi2py --ignore-names 'content,run_skill,print_response,node_version,exit_code,alive,model_config,exc_info,usage'
         language: system
         types: [python]
         pass_filenames: false

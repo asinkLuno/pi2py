@@ -49,7 +49,7 @@ def test_agent_concatenates_skills_into_instructions(tmp_path: Path) -> None:
         instructions="Base.",
         skills=[tmp_path],
     )
-    assert agent._payload["instructions"] == "Base.\n\nSkill body."
+    assert agent._instructions == "Base.\n\nSkill body."
 
 
 def test_run_skill_injects_for_one_run_only(
@@ -62,11 +62,12 @@ def test_run_skill_injects_for_one_run_only(
 
     captured: list[dict] = []
 
-    def fake_request(payload: dict) -> dict:
-        captured.append(payload)
-        return {"content": "ok"}
+    class FakeProcess:
+        def request(self, command: str, payload: dict) -> dict:
+            captured.append(payload)
+            return {"content": "ok"}
 
-    monkeypatch.setattr(agent, "_process_request", fake_request)
+    monkeypatch.setattr(agent, "_process", FakeProcess())
 
     assert agent.run_skill(tmp_path, "the args").content == "ok"
     assert captured[0]["instructions"] == "Base.\n\nSkill body."
